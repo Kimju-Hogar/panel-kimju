@@ -24,6 +24,16 @@ const productSchema = new mongoose.Schema({
         type: String,
         default: ''
     },
+    type: {
+        type: String,
+        enum: ['hogar', 'calzado'],
+        default: 'hogar',
+        required: true
+    },
+    sizes: {
+        type: [String],
+        default: []
+    },
     costPrice: {
         type: Number,
         required: true,
