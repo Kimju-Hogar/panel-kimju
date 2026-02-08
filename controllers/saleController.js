@@ -71,7 +71,7 @@ const createSale = async (req, res) => {
 // @access  Private
 const getSales = async (req, res) => {
     try {
-        const { startDate, endDate, paymentMethod, channel } = req.query;
+        const { startDate, endDate, paymentMethod, channel, type } = req.query;
         let query = {};
 
         // Date Filter
@@ -92,8 +92,15 @@ const getSales = async (req, res) => {
             query["products.product"] = req.query.productId;
         }
 
+        // Type Filter (Find sales containing products of this type)
+        if (type && type !== 'all') {
+            const products = await Product.find({ type: type }).select('_id');
+            const productIds = products.map(p => p._id);
+            query["products.product"] = { $in: productIds };
+        }
+
         const sales = await Sale.find(query)
-            .populate('products.product', 'name sku image')
+            .populate('products.product', 'name sku image type') // Populating type too just in case
             .populate('createdBy', 'name')
             .sort({ date: -1 });
 
@@ -108,7 +115,7 @@ const getSales = async (req, res) => {
 // @access  Private
 const getSalesByProduct = async (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, type } = req.query;
         let matchStage = {};
 
         if (startDate || endDate) {
@@ -121,7 +128,7 @@ const getSalesByProduct = async (req, res) => {
             }
         }
 
-        const sales = await Sale.aggregate([
+        const pipeline = [
             { $match: matchStage },
             { $unwind: "$products" },
             {
@@ -133,6 +140,8 @@ const getSalesByProduct = async (req, res) => {
                 }
             },
             { $unwind: "$productDetails" },
+            // Filter by Type if enabled
+            ...(type && type !== 'all' ? [{ $match: { "productDetails.type": type } }] : []),
             {
                 $group: {
                     _id: "$productDetails._id",
@@ -146,7 +155,9 @@ const getSalesByProduct = async (req, res) => {
                 }
             },
             { $sort: { totalRevenue: -1 } }
-        ]);
+        ];
+
+        const sales = await Sale.aggregate(pipeline);
 
         res.json(sales);
     } catch (error) {

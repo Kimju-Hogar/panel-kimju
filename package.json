@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "backup": "node scripts/backupData.js",
+    "migrate:products": "node scripts/migrateProductTypes.js"
   },
   "keywords": [],
   "author": "",

@@ -43,7 +43,9 @@ const createProduct = async (req, res) => {
             publicPrice,
             stock,
             minStock,
-            image
+            image,
+            type,
+            sizes
         } = req.body;
 
         const productExists = await Product.findOne({ sku });
@@ -61,7 +63,9 @@ const createProduct = async (req, res) => {
             publicPrice,
             stock,
             minStock,
-            image
+            image,
+            type,
+            sizes
         });
 
         const createdProduct = await product.save();
@@ -87,7 +91,9 @@ const updateProduct = async (req, res) => {
             stock,
             minStock,
             status,
-            image
+            image,
+            type,
+            sizes
         } = req.body;
 
         const product = await Product.findById(req.params.id);
@@ -103,6 +109,8 @@ const updateProduct = async (req, res) => {
             product.minStock = minStock !== undefined ? minStock : product.minStock;
             product.status = status || product.status;
             product.image = image || product.image;
+            product.type = type || product.type;
+            product.sizes = sizes || product.sizes;
 
             const updatedProduct = await product.save();
             res.json(updatedProduct);
