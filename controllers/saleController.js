@@ -25,8 +25,23 @@ const createSale = async (req, res) => {
                 return res.status(404).json({ message: `Product not found: ${item.product}` });
             }
 
-            if (product.stock < item.quantity) {
-                return res.status(400).json({ message: `Insufficient stock for product: ${product.name}` });
+            // Per-size stock check for calzado
+            if (item.selectedSize && product.type === 'calzado' && product.sizes && product.sizes.length > 0) {
+                const sizeEntry = product.sizes.find(s => s.size === item.selectedSize);
+                if (!sizeEntry) {
+                    return res.status(400).json({ message: `Talla ${item.selectedSize} no encontrada para: ${product.name}` });
+                }
+                if (sizeEntry.stock < item.quantity) {
+                    return res.status(400).json({ message: `Stock insuficiente para talla ${item.selectedSize} de: ${product.name}` });
+                }
+                // Deduct from specific size
+                sizeEntry.stock -= item.quantity;
+            } else {
+                if (product.stock < item.quantity) {
+                    return res.status(400).json({ message: `Insufficient stock for product: ${product.name}` });
+                }
+                // Deduct from general stock (non-calzado)
+                product.stock -= item.quantity;
             }
 
             const subtotal = item.unitPrice * item.quantity;
@@ -40,11 +55,11 @@ const createSale = async (req, res) => {
                 quantity: item.quantity,
                 unitPrice: item.unitPrice,
                 unitCost: product.costPrice,
-                subtotal
+                subtotal,
+                selectedSize: item.selectedSize || undefined
             });
 
-            // Deduct Stock
-            product.stock -= item.quantity;
+            // Save triggers pre-save hook which recalculates total stock for calzado
             await product.save();
         }
 
@@ -268,7 +283,16 @@ const deleteSale = async (req, res) => {
         for (const item of sale.products) {
             const product = await Product.findById(item.product);
             if (product) {
-                product.stock += item.quantity;
+                // Restore per-size stock for calzado
+                if (item.selectedSize && product.type === 'calzado' && product.sizes && product.sizes.length > 0) {
+                    const sizeEntry = product.sizes.find(s => s.size === item.selectedSize);
+                    if (sizeEntry) {
+                        sizeEntry.stock += item.quantity;
+                    }
+                } else {
+                    product.stock += item.quantity;
+                }
+                // Save triggers pre-save hook which recalculates total stock for calzado
                 await product.save();
             }
         }

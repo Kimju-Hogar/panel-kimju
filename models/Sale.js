@@ -23,6 +23,9 @@ const saleSchema = new mongoose.Schema({
         subtotal: {
             type: Number,
             required: true
+        },
+        selectedSize: {
+            type: String // Only for calzado products
         }
     }],
     totalAmount: {
