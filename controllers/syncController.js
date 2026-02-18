@@ -8,15 +8,6 @@ const syncProductToWebsites = async (product) => {
     if (process.env.KINGYU_HOGAR_URL) urls.push(process.env.KINGYU_HOGAR_URL);
     if (process.env.KINGYU_CALZADO_URL) urls.push(process.env.KINGYU_CALZADO_URL);
 
-    // Filter based on product type? 
-    // User said: "connect the inventory... to Kingyu Hogar".
-    // "Kingyu Calzado... exactly the same".
-    // It seems products might be distributed based on type, or all to both?
-    // User said: "I need you to connect the inventory... to the page of Kingyu Hogar... and those products that I upload... show up on Kingyu Hogar".
-    // And later: "And similarly with Kingyu Calzado".
-    // I will send to the appropriate URL based on product type if possible, or both if not specified.
-    // For now, let's send to the URL corresponding to the product type.
-
     let targetUrls = [];
     if (product.type === 'hogar' && process.env.KINGYU_HOGAR_URL) {
         targetUrls.push(process.env.KINGYU_HOGAR_URL);
@@ -34,15 +25,18 @@ const syncProductToWebsites = async (product) => {
 
     const secret = process.env.SYNC_SECRET;
 
+    // Use a dedicated image base URL (where images are physically hosted)
+    // This ensures both Hogar and Calzado products point to the correct image server
+    const imageBaseUrl = process.env.IMAGE_BASE_URL || process.env.KINGYU_HOGAR_URL || '';
+
+    let fullImageUrl = product.image;
+    if (product.image && !product.image.startsWith('http')) {
+        const cleanPath = product.image.startsWith('/') ? product.image : `/${product.image}`;
+        fullImageUrl = `${imageBaseUrl}${cleanPath}`;
+    }
+
     for (const url of targetUrls) {
         try {
-            // Build full absolute image URL so frontends can use it directly
-            // e.g. /uploads/image-xxx.jpeg -> https://api.kimjuhogar.com/uploads/image-xxx.jpeg
-            let fullImageUrl = product.image;
-            if (product.image && !product.image.startsWith('http')) {
-                const cleanPath = product.image.startsWith('/') ? product.image : `/${product.image}`;
-                fullImageUrl = `${url}${cleanPath}`;
-            }
 
             const syncData = {
                 sku: product.sku,
