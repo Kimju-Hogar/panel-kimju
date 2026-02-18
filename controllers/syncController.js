@@ -1,67 +1,9 @@
 const Sale = require('../models/Sale');
 const Product = require('../models/Product');
-const axios = require('axios');
 
-// Helper to push product to websites
-const syncProductToWebsites = async (product) => {
-    const urls = [];
-    if (process.env.KINGYU_HOGAR_URL) urls.push(process.env.KINGYU_HOGAR_URL);
-    if (process.env.KINGYU_CALZADO_URL) urls.push(process.env.KINGYU_CALZADO_URL);
-
-    let targetUrls = [];
-    if (product.type === 'hogar' && process.env.KINGYU_HOGAR_URL) {
-        targetUrls.push(process.env.KINGYU_HOGAR_URL);
-    } else if (product.type === 'calzado' && process.env.KINGYU_CALZADO_URL) {
-        targetUrls.push(process.env.KINGYU_CALZADO_URL);
-    } else {
-        // If type is not set or valid, maybe try both or log warning?
-        // Let's safe guard.
-        if (process.env.KINGYU_HOGAR_URL) targetUrls.push(process.env.KINGYU_HOGAR_URL);
-        if (process.env.KINGYU_CALZADO_URL) targetUrls.push(process.env.KINGYU_CALZADO_URL);
-    }
-
-    // Unique URLs
-    targetUrls = [...new Set(targetUrls)];
-
-    const secret = process.env.SYNC_SECRET;
-
-    // Use a dedicated image base URL (where images are physically hosted)
-    // This ensures both Hogar and Calzado products point to the correct image server
-    const imageBaseUrl = process.env.IMAGE_BASE_URL || process.env.KINGYU_HOGAR_URL || '';
-
-    let fullImageUrl = product.image;
-    if (product.image && !product.image.startsWith('http')) {
-        const cleanPath = product.image.startsWith('/') ? product.image : `/${product.image}`;
-        fullImageUrl = `${imageBaseUrl}${cleanPath}`;
-    }
-
-    for (const url of targetUrls) {
-        try {
-            const syncData = {
-                sku: product.sku,
-                name: product.name,
-                price: Math.ceil(product.publicPrice * 1.03), // 3% increase
-                stock: product.stock,
-                image: fullImageUrl,
-                category: product.category,
-                type: product.type
-            };
-
-            const endpoint = `${url}/api/sync/products`;
-            console.log(`Syncing product ${product.sku} to ${endpoint}...`);
-
-            await axios.post(endpoint, syncData, {
-                headers: { 'x-sync-secret': secret },
-                timeout: 15000 // 15 second timeout
-            });
-            console.log(`✅ Synced product ${product.sku} to ${url}`);
-        } catch (error) {
-            const status = error.response?.status || 'NO_RESPONSE';
-            const data = error.response?.data || error.code || error.message;
-            console.error(`❌ Failed to sync ${product.sku} to ${url}: Status=${status}, Details=`, data);
-        }
-    }
-};
+// NOTE: syncProductToWebsites has been removed.
+// Products are now shared via the same MongoDB database.
+// Websites read directly from the Panel's products collection, filtered by type.
 
 // @desc    Receive sale from website
 // @route   POST /api/sync/sales
@@ -74,15 +16,14 @@ const receiveWebSale = async (req, res) => {
         }
 
         const {
-            orderId, // Remote order ID
-            products, // [{ sku, quantity, price }]
+            orderId,
+            products,
             totalAmount,
-            paymentMethod, // 'Wompi', etc.
-            customer, // { name, email, ... }
-            origin // 'Kingyu Hogar' or 'Kingyu Calzado'
+            paymentMethod,
+            customer,
+            origin
         } = req.body;
 
-        // Verify/Find products and deduct stock
         const saleProducts = [];
         let calculatedTotal = 0;
         let totalProfit = 0;
@@ -91,14 +32,13 @@ const receiveWebSale = async (req, res) => {
             const product = await Product.findOne({ sku: item.sku });
             if (!product) {
                 console.warn(`Product SKU ${item.sku} not found during sync sale.`);
-                continue; // Skip or error? Skip for now to process partials?
+                continue;
             }
 
             // Deduct stock
             product.stock = Math.max(0, product.stock - item.quantity);
             await product.save();
 
-            // Calculate profit
             const unitCost = product.costPrice || 0;
             const subtotal = item.price * item.quantity;
             const profit = subtotal - (unitCost * item.quantity);
@@ -115,7 +55,6 @@ const receiveWebSale = async (req, res) => {
             totalProfit += profit;
         }
 
-        // Create Sale Record
         const sale = new Sale({
             products: saleProducts,
             totalAmount: totalAmount || calculatedTotal,
@@ -139,6 +78,5 @@ const receiveWebSale = async (req, res) => {
 };
 
 module.exports = {
-    receiveWebSale,
-    syncProductToWebsites
+    receiveWebSale
 };

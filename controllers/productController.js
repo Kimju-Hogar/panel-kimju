@@ -1,5 +1,4 @@
 const Product = require('../models/Product');
-const { syncProductToWebsites } = require('./syncController');
 
 // @desc    Get all products
 // @route   GET /api/products
@@ -71,14 +70,6 @@ const createProduct = async (req, res) => {
 
         const createdProduct = await product.save();
 
-        // Sync to websites
-        try {
-            await syncProductToWebsites(createdProduct);
-        } catch (syncError) {
-            console.error("Sync error:", syncError);
-            // Don't fail the request if sync fails, user can retry or it will be handled by background job later (if implemented)
-        }
-
         res.status(201).json(createdProduct);
     } catch (error) {
         console.error("Error creating product:", error);
@@ -123,14 +114,6 @@ const updateProduct = async (req, res) => {
             product.sizes = sizes || product.sizes;
 
             const updatedProduct = await product.save();
-
-            // Sync to websites
-            try {
-                // Ensure we send the updated product
-                await syncProductToWebsites(updatedProduct);
-            } catch (syncError) {
-                console.error("Sync error:", syncError);
-            }
 
             res.json(updatedProduct);
         } else {

@@ -30,10 +30,10 @@ const productSchema = new mongoose.Schema({
         default: 'hogar',
         required: true
     },
-    sizes: {
-        type: [String],
-        default: []
-    },
+    sizes: [{
+        size: { type: String, required: true },
+        stock: { type: Number, required: true, default: 0 }
+    }],
     costPrice: {
         type: Number,
         required: true,
@@ -66,7 +66,7 @@ const productSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Calculate margin before saving
+// Calculate margin and auto-calculate stock for calzado
 productSchema.pre('save', async function () {
     if (this.publicPrice > 0) {
         this.margin.amount = this.publicPrice - this.costPrice;
@@ -74,6 +74,11 @@ productSchema.pre('save', async function () {
     } else {
         this.margin.amount = 0;
         this.margin.percentage = 0;
+    }
+
+    // Auto-calculate total stock from sizes for calzado products
+    if (this.type === 'calzado' && this.sizes && this.sizes.length > 0) {
+        this.stock = this.sizes.reduce((total, s) => total + (s.stock || 0), 0);
     }
 });
 
