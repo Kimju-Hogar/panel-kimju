@@ -32,32 +32,27 @@ const syncProductToWebsites = async (product) => {
     // Unique URLs
     targetUrls = [...new Set(targetUrls)];
 
-    const syncData = {
-        sku: product.sku,
-        name: product.name,
-        // Description? Panel might not have it, but Hogar needs it.
-        // If Panel doesn't have description, maybe send name as description?
-        // Hogar model has description optional (I saw commented out required).
-        price: Math.ceil(product.publicPrice * 1.03), // 3% increase
-        stock: product.stock,
-        image: product.image,
-        category: product.category,
-        type: product.type
-    };
-
     const secret = process.env.SYNC_SECRET;
 
     for (const url of targetUrls) {
         try {
-            // Check if product exists on remote (by SKU) to decide POST or PUT?
-            // Or just have one endpoint 'upsert'?
-            // Plan said: POST create, PUT update.
-            // Let's try upsert endpoint on the other side to simplify.
-            // Or better, standard restful: try to get, if fail, create?
-            // "Modify Product creation/update in Panel to push to Websites"
+            // Build full absolute image URL so frontends can use it directly
+            // e.g. /uploads/image-xxx.jpeg -> https://api.kimjuhogar.com/uploads/image-xxx.jpeg
+            let fullImageUrl = product.image;
+            if (product.image && !product.image.startsWith('http')) {
+                const cleanPath = product.image.startsWith('/') ? product.image : `/${product.image}`;
+                fullImageUrl = `${url}${cleanPath}`;
+            }
 
-            // To simplify, I will implement a single '/api/sync/products' endpoint on the website 
-            // that accepts POST and handles upsert logic (find by SKU, update or create).
+            const syncData = {
+                sku: product.sku,
+                name: product.name,
+                price: Math.ceil(product.publicPrice * 1.03), // 3% increase
+                stock: product.stock,
+                image: fullImageUrl,
+                category: product.category,
+                type: product.type
+            };
 
             await axios.post(`${url}/api/sync/products`, syncData, {
                 headers: { 'x-sync-secret': secret }
