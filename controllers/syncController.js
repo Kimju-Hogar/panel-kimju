@@ -37,7 +37,6 @@ const syncProductToWebsites = async (product) => {
 
     for (const url of targetUrls) {
         try {
-
             const syncData = {
                 sku: product.sku,
                 name: product.name,
@@ -48,12 +47,18 @@ const syncProductToWebsites = async (product) => {
                 type: product.type
             };
 
-            await axios.post(`${url}/api/sync/products`, syncData, {
-                headers: { 'x-sync-secret': secret }
+            const endpoint = `${url}/api/sync/products`;
+            console.log(`Syncing product ${product.sku} to ${endpoint}...`);
+
+            await axios.post(endpoint, syncData, {
+                headers: { 'x-sync-secret': secret },
+                timeout: 15000 // 15 second timeout
             });
-            console.log(`Synced product ${product.sku} to ${url}`);
+            console.log(`✅ Synced product ${product.sku} to ${url}`);
         } catch (error) {
-            console.error(`Failed to sync product ${product.sku} to ${url}:`, error.message);
+            const status = error.response?.status || 'NO_RESPONSE';
+            const data = error.response?.data || error.code || error.message;
+            console.error(`❌ Failed to sync ${product.sku} to ${url}: Status=${status}, Details=`, data);
         }
     }
 };
