@@ -43,6 +43,8 @@ const createProduct = async (req, res) => {
             stock,
             minStock,
             image,
+            images,
+            color,
             type,
             sizes
         } = req.body;
@@ -76,6 +78,8 @@ const createProduct = async (req, res) => {
             stock: Number(stock) || 0,
             minStock: Number(minStock) || 5,
             image: image || '',
+            images: Array.isArray(images) ? images : [],
+            color: color?.trim() || '',
             type,
             sizes: sizes || []
         });
@@ -131,6 +135,8 @@ const updateProduct = async (req, res) => {
         if (minStock !== undefined) product.minStock = Number(minStock);
         if (status !== undefined) product.status = status;
         if (image !== undefined) product.image = image;
+        if (images !== undefined) product.images = Array.isArray(images) ? images : [];
+        if (color !== undefined) product.color = color;
         if (type !== undefined) product.type = type;
         if (sizes !== undefined) product.sizes = sizes;
 
