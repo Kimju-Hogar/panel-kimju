@@ -12,11 +12,11 @@ const saleSchema = new mongoose.Schema({
             required: true,
             min: 1
         },
-        unitPrice: { // Price at the moment of sale
+        unitPrice: {
             type: Number,
             required: true
         },
-        unitCost: { // Cost at the moment of sale (for accurate profit calculation)
+        unitCost: {
             type: Number,
             required: true
         },
@@ -25,7 +25,7 @@ const saleSchema = new mongoose.Schema({
             required: true
         },
         selectedSize: {
-            type: String // Only for calzado products
+            type: String
         }
     }],
     totalAmount: {
@@ -60,8 +60,12 @@ const saleSchema = new mongoose.Schema({
     timestamps: true
 });
 
+// ─── Indexes for faster queries ────────────────────────────────────────────────
+saleSchema.index({ date: -1 });           // Recent activity sort, trend queries
+saleSchema.index({ createdAt: -1 });      // Default sort by creation
+saleSchema.index({ paymentMethod: 1 });   // Dashboard: sales by payment method
+saleSchema.index({ channel: 1 });         // Filter by channel
+
 const Sale = mongoose.model('Sale', saleSchema);
 
 module.exports = Sale;
-
-//NEW

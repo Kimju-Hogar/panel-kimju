@@ -8,298 +8,126 @@ const getDashboardStats = async (req, res) => {
     try {
         const { type } = req.query; // 'hogar', 'calzado', or undefined/'all'
 
-        let productMatch = {};
-        if (type && type !== 'all') {
-            productMatch = { "productDetails.type": type };
-        }
+        const isFiltered = type && type !== 'all';
+        const productMatch = isFiltered ? { "productDetails.type": type } : {};
+        const stockMatch = isFiltered ? { type } : {};
 
-        // 1. Calculate Total Sales & Total Profit
-        let salesStats;
-        if (!type || type === 'all') {
-            salesStats = await Sale.aggregate([
-                {
-                    $group: {
-                        _id: null,
-                        totalSales: { $sum: "$totalAmount" },
-                        totalProfit: { $sum: "$totalProfit" }
-                    }
-                }
-            ]);
-        } else {
-            salesStats = await Sale.aggregate([
+        // ─── Build all aggregation pipelines ────────────────────────────────────
+
+        // 1. Total Sales & Total Profit
+        const salesStatsPipeline = isFiltered
+            ? [
                 { $unwind: "$products" },
-                {
-                    $lookup: {
-                        from: "products",
-                        localField: "products.product",
-                        foreignField: "_id",
-                        as: "productDetails"
-                    }
-                },
+                { $lookup: { from: "products", localField: "products.product", foreignField: "_id", as: "productDetails" } },
                 { $unwind: "$productDetails" },
                 { $match: productMatch },
-                {
-                    $group: {
-                        _id: null,
-                        totalSales: { $sum: "$products.subtotal" },
-                        totalProfit: {
-                            $sum: {
-                                $subtract: [
-                                    "$products.subtotal",
-                                    { $multiply: ["$products.unitCost", "$products.quantity"] }
-                                ]
-                            }
-                        }
-                    }
-                }
-            ]);
-        }
+                { $group: { _id: null, totalSales: { $sum: "$products.subtotal" }, totalProfit: { $sum: { $subtract: ["$products.subtotal", { $multiply: ["$products.unitCost", "$products.quantity"] }] } } } }
+            ]
+            : [{ $group: { _id: null, totalSales: { $sum: "$totalAmount" }, totalProfit: { $sum: "$totalProfit" } } }];
 
-        const totalSales = salesStats.length > 0 ? salesStats[0].totalSales : 0;
-        const totalProfit = salesStats.length > 0 ? salesStats[0].totalProfit : 0;
-
-        // 2. Calculate Stock Value & Low Stock Count
-        let stockMatch = {};
-        if (type && type !== 'all') {
-            stockMatch = { type: type };
-        }
-
-        const productsStats = await Product.aggregate([
+        // 2. Stock Value & Low Stock Count
+        const productsStatsPipeline = [
             { $match: stockMatch },
-            {
-                $project: {
-                    stockValue: { $multiply: ["$costPrice", "$stock"] },
-                    isLowStock: { $lt: ["$stock", "$minStock"] }
-                }
-            },
-            {
-                $group: {
-                    _id: null,
-                    totalStockValue: { $sum: "$stockValue" },
-                    lowStockCount: {
-                        $sum: { $cond: ["$isLowStock", 1, 0] }
-                    }
-                }
-            }
-        ]);
+            { $project: { stockValue: { $multiply: ["$costPrice", "$stock"] }, isLowStock: { $lt: ["$stock", "$minStock"] } } },
+            { $group: { _id: null, totalStockValue: { $sum: "$stockValue" }, lowStockCount: { $sum: { $cond: ["$isLowStock", 1, 0] } } } }
+        ];
 
-        const stockValue = productsStats.length > 0 ? productsStats[0].totalStockValue : 0;
-        const lowStockCount = productsStats.length > 0 ? productsStats[0].lowStockCount : 0;
-
-        // 3. Get Recent Activity (Last 5 Sales)
-        // If filtering, we only show sales that contain the product type, and calculate the amount for that type.
-        let recentActivity;
-        if (!type || type === 'all') {
-            recentActivity = await Sale.find()
+        // 3. Recent Activity (Last 5 Sales)
+        let recentActivityQuery;
+        if (!isFiltered) {
+            recentActivityQuery = Sale.find()
                 .sort({ createdAt: -1 })
                 .limit(5)
                 .populate('customer', 'name')
-                .select('totalAmount date channel customer products');
+                .select('totalAmount date channel customer products')
+                .lean();
         } else {
-            recentActivity = await Sale.aggregate([
+            recentActivityQuery = Sale.aggregate([
                 { $sort: { createdAt: -1 } },
-                { $limit: 20 }, // Optimization: look at recent 20, then filter. Ideally match first but date sort is needed? No, unwind first is heavy.
-                // Better approach: Unwind, Lookup, Match, Group back to Sale?
-                // Or just fetch recent sales and filter in memory? 
-                // Let's do aggregation for consistency.
+                { $limit: 50 },
                 { $unwind: "$products" },
-                {
-                    $lookup: {
-                        from: "products",
-                        localField: "products.product",
-                        foreignField: "_id",
-                        as: "productDetails"
-                    }
-                },
+                { $lookup: { from: "products", localField: "products.product", foreignField: "_id", as: "productDetails" } },
                 { $unwind: "$productDetails" },
                 { $match: productMatch },
-                {
-                    $group: {
-                        _id: "$_id",
-                        date: { $first: "$date" },
-                        channel: { $first: "$channel" },
-                        // customer: { $first: "$customer" }, // ID only
-                        totalAmount: { $sum: "$products.subtotal" }
-                    }
-                },
-                { $sort: { date: -1 } },
-                { $limit: 5 }
-            ]);
-
-            // Populate customer manually or via lookup
-            if (recentActivity.length > 0) {
-                await Sale.populate(recentActivity, { path: 'customer', select: 'name' });
-                // Note: group lost the customer field if I didn't include it. 
-                // Fix: Include customer in group.
-                // Actually, easier to invoke a second lookup or standard populate.
-                // let's re-run aggregation correctly including customer.
-            }
-        }
-
-        // Re-doing recent activity for filtered case to be robust
-        if (type && type !== 'all') {
-            recentActivity = await Sale.aggregate([
-                { $sort: { createdAt: -1 } },
-                { $limit: 50 }, // Look at last 50 transactions to find 5 matches
-                { $unwind: "$products" },
-                {
-                    $lookup: {
-                        from: "products",
-                        localField: "products.product",
-                        foreignField: "_id",
-                        as: "productDetails"
-                    }
-                },
-                { $unwind: "$productDetails" },
-                { $match: productMatch },
-                {
-                    $group: {
-                        _id: "$_id",
-                        date: { $first: "$date" },
-                        channel: { $first: "$channel" },
-                        customer: { $first: "$customer" },
-                        totalAmount: { $sum: "$products.subtotal" }
-                    }
-                },
+                { $group: { _id: "$_id", date: { $first: "$date" }, channel: { $first: "$channel" }, customer: { $first: "$customer" }, totalAmount: { $sum: "$products.subtotal" } } },
                 { $sort: { date: -1 } },
                 { $limit: 5 },
-                {
-                    $lookup: {
-                        from: "customers",
-                        localField: "customer",
-                        foreignField: "_id",
-                        as: "customerParams"
-                    }
-                },
-                {
-                    $addFields: {
-                        customer: { $arrayElemAt: ["$customerParams", 0] }
-                    }
-                },
-                { $project: { customerParams: 0 } } // Clean up
+                { $lookup: { from: "customers", localField: "customer", foreignField: "_id", as: "customerData" } },
+                { $addFields: { customer: { $arrayElemAt: ["$customerData", 0] } } },
+                { $project: { customerData: 0 } }
             ]);
         }
 
-
-        // 4. Get Sales Trend (Last 7 Days)
+        // 4. Sales Trend (Last 7 Days)
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
         sevenDaysAgo.setHours(0, 0, 0, 0);
 
-        let trendAggregation = [
-            {
-                $match: {
-                    date: { $gte: sevenDaysAgo }
-                }
-            }
-        ];
-
-        if (type && type !== 'all') {
-            trendAggregation.push(
+        const trendPipeline = isFiltered
+            ? [
+                { $match: { date: { $gte: sevenDaysAgo } } },
                 { $unwind: "$products" },
-                {
-                    $lookup: {
-                        from: "products",
-                        localField: "products.product",
-                        foreignField: "_id",
-                        as: "productDetails"
-                    }
-                },
+                { $lookup: { from: "products", localField: "products.product", foreignField: "_id", as: "productDetails" } },
                 { $unwind: "$productDetails" },
                 { $match: productMatch },
-                {
-                    $group: {
-                        _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
-                        sales: { $sum: "$products.subtotal" }
-                    }
-                }
-            );
-        } else {
-            trendAggregation.push({
-                $group: {
-                    _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
-                    sales: { $sum: "$totalAmount" }
-                }
-            });
-        }
-
-        trendAggregation.push({ $sort: { _id: 1 } });
-
-        const salesTrend = await Sale.aggregate(trendAggregation);
-
+                { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } }, sales: { $sum: "$products.subtotal" } } },
+                { $sort: { _id: 1 } }
+            ]
+            : [
+                { $match: { date: { $gte: sevenDaysAgo } } },
+                { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } }, sales: { $sum: "$totalAmount" } } },
+                { $sort: { _id: 1 } }
+            ];
 
         // 5. Sales by Payment Method
-        let paymentAggregation = [];
-        if (type && type !== 'all') {
-            paymentAggregation.push(
+        const paymentPipeline = isFiltered
+            ? [
                 { $unwind: "$products" },
-                {
-                    $lookup: {
-                        from: "products",
-                        localField: "products.product",
-                        foreignField: "_id",
-                        as: "productDetails"
-                    }
-                },
+                { $lookup: { from: "products", localField: "products.product", foreignField: "_id", as: "productDetails" } },
                 { $unwind: "$productDetails" },
                 { $match: productMatch },
-                {
-                    $group: {
-                        _id: "$paymentMethod",
-                        value: { $sum: "$products.subtotal" }
-                    }
-                }
-            );
-        } else {
-            paymentAggregation.push({
-                $group: {
-                    _id: "$paymentMethod",
-                    value: { $sum: "$totalAmount" }
-                }
-            });
-        }
-
-        const salesByPaymentMethod = await Sale.aggregate(paymentAggregation);
+                { $group: { _id: "$paymentMethod", value: { $sum: "$products.subtotal" } } }
+            ]
+            : [{ $group: { _id: "$paymentMethod", value: { $sum: "$totalAmount" } } }];
 
         // 6. Sales by Category
-        const salesByCategory = await Sale.aggregate([
+        const categoryPipeline = [
             { $unwind: "$products" },
-            {
-                $lookup: {
-                    from: "products",
-                    localField: "products.product",
-                    foreignField: "_id",
-                    as: "productDetails"
-                }
-            },
+            { $lookup: { from: "products", localField: "products.product", foreignField: "_id", as: "productDetails" } },
             { $unwind: "$productDetails" },
-            // If filtering by type, we only match that type. 
-            // If 'all', we match everything (no match stage needed, or match empty)
-            ...(type && type !== 'all' ? [{ $match: productMatch }] : []),
-            {
-                $group: {
-                    _id: "$productDetails.category",
-                    value: { $sum: "$products.subtotal" }
-                }
-            }
+            ...(isFiltered ? [{ $match: productMatch }] : []),
+            { $group: { _id: "$productDetails.category", value: { $sum: "$products.subtotal" } } }
+        ];
+
+        // ─── Execute ALL queries IN PARALLEL ────────────────────────────────────
+        const [
+            salesStats,
+            productsStats,
+            recentActivity,
+            salesTrend,
+            salesByPaymentMethod,
+            salesByCategory
+        ] = await Promise.all([
+            Sale.aggregate(salesStatsPipeline),
+            Product.aggregate(productsStatsPipeline),
+            recentActivityQuery,
+            Sale.aggregate(trendPipeline),
+            Sale.aggregate(paymentPipeline),
+            Sale.aggregate(categoryPipeline)
         ]);
 
+        // ─── Format Results ──────────────────────────────────────────────────────
+        const totalSales = salesStats.length > 0 ? salesStats[0].totalSales : 0;
+        const totalProfit = salesStats.length > 0 ? salesStats[0].totalProfit : 0;
+        const stockValue = productsStats.length > 0 ? productsStats[0].totalStockValue : 0;
+        const lowStockCount = productsStats.length > 0 ? productsStats[0].lowStockCount : 0;
 
-        // Format salesTrend for the chart
-        const formattedTrend = salesTrend.map(item => {
-            const date = new Date(item._id);
-            // Fix day output to be consistent with locale if possible, or static array
-            const days = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
-            // UTC vs Local issue might exist here, but sticking to existing logic
-            // Add a small fix for timezone if needed, but existing code used getDay() directly
-            // Note: item._id is YYYY-MM-DD string. new Date(string) is UTC usually.
-            // Using getUTCDay() might be safer if the string is UTC.
-            return {
-                name: days[date.getUTCDay()],
-                fullDate: item._id,
-                sales: item.sales
-            };
-        });
+        const days = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
+        const formattedTrend = salesTrend.map(item => ({
+            name: days[new Date(item._id).getUTCDay()],
+            fullDate: item._id,
+            sales: item.sales
+        }));
 
         res.json({
             totalSales,
@@ -318,6 +146,4 @@ const getDashboardStats = async (req, res) => {
     }
 };
 
-module.exports = {
-    getDashboardStats
-};
+module.exports = { getDashboardStats };
