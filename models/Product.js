@@ -28,10 +28,10 @@ const productSchema = new mongoose.Schema({
         type: [String],
         default: []
     },
-    color: {
-        type: String,
-        default: ''
-    },
+    colors: [{
+        color: { type: String, required: true },
+        stock: { type: Number, required: true, default: 0 }
+    }],
     type: {
         type: String,
         enum: ['hogar', 'calzado'],
@@ -93,6 +93,11 @@ productSchema.pre('save', async function () {
     // Auto-calculate total stock from sizes for calzado products
     if (this.type === 'calzado' && this.sizes && this.sizes.length > 0) {
         this.stock = this.sizes.reduce((total, s) => total + (s.stock || 0), 0);
+    }
+    
+    // Auto-calculate total stock from colors for hogar products
+    if (this.type === 'hogar' && this.colors && this.colors.length > 0) {
+        this.stock = this.colors.reduce((total, c) => total + (c.stock || 0), 0);
     }
 });
 

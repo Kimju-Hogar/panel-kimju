@@ -43,8 +43,16 @@ const createSale = async (req, res) => {
                 if (sizeEntry.stock < item.quantity) {
                     return res.status(400).json({ message: `Stock insuficiente para talla ${item.selectedSize} de: ${product.name}` });
                 }
-                // Deduct from size (in-memory, will save later)
                 sizeEntry.stock -= item.quantity;
+            } else if (item.selectedColor && product.type === 'hogar' && product.colors?.length > 0) {
+                const colorEntry = product.colors.find(c => c.color === item.selectedColor);
+                if (!colorEntry) {
+                    return res.status(400).json({ message: `Color ${item.selectedColor} no encontrado para: ${product.name}` });
+                }
+                if (colorEntry.stock < item.quantity) {
+                    return res.status(400).json({ message: `Stock insuficiente para color ${item.selectedColor} de: ${product.name}` });
+                }
+                colorEntry.stock -= item.quantity;
             } else {
                 if (product.stock < item.quantity) {
                     return res.status(400).json({ message: `Stock insuficiente para: ${product.name}` });
@@ -64,7 +72,8 @@ const createSale = async (req, res) => {
                 unitPrice: item.unitPrice,
                 unitCost: product.costPrice,
                 subtotal,
-                selectedSize: item.selectedSize || undefined
+                selectedSize: item.selectedSize || undefined,
+                selectedColor: item.selectedColor || undefined
             });
         }
 
@@ -269,6 +278,9 @@ const deleteSale = async (req, res) => {
                     if (item.selectedSize && product.type === 'calzado' && product.sizes?.length > 0) {
                         const sizeEntry = product.sizes.find(s => s.size === item.selectedSize);
                         if (sizeEntry) sizeEntry.stock += item.quantity;
+                    } else if (item.selectedColor && product.type === 'hogar' && product.colors?.length > 0) {
+                        const colorEntry = product.colors.find(c => c.color === item.selectedColor);
+                        if (colorEntry) colorEntry.stock += item.quantity;
                     } else {
                         product.stock += item.quantity;
                     }
