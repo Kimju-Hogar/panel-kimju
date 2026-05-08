@@ -5,7 +5,19 @@ const Product = require('../models/Product');
 // @access  Private
 const getProducts = async (req, res) => {
     try {
-        const products = await Product.find({}).lean();
+        const { lowStock } = req.query;
+        let query = {};
+
+        if (lowStock === 'true') {
+            // Find products where stock is less than or equal to minStock
+            // and status is active
+            query = {
+                status: 'active',
+                $expr: { $lte: ["$stock", "$minStock"] }
+            };
+        }
+
+        const products = await Product.find(query).lean();
         res.json(products);
     } catch (error) {
         res.status(500).json({ message: error.message });

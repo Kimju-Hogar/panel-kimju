@@ -25,6 +25,7 @@ app.use('/api/upload', require('./routes/uploadRoutes'));
 app.use('/api/categories', require('./routes/categoryRoutes')); // Route registered
 app.use('/api/dashboard', require('./routes/dashboardRoutes')); // Dashboard routes
 app.use('/api/sync', require('./routes/syncRoutes')); // Sync routes
+app.use('/api/finance', require('./routes/financeRoutes')); // Finance module routes
 
 // Make uploads folder static
 const fs = require('fs');
