@@ -14,7 +14,7 @@ const financeLimit = rateLimit({
 router.use(financeLimit);
 
 
-const { getFinanceDashboard, getFinanceStats } = require('../controllers/financeController');
+const { getFinanceDashboard, getFinanceStats, getReportesUnificados } = require('../controllers/financeController');
 const { getPersonalExpenses, createPersonalExpense, updatePersonalExpense, deletePersonalExpense } = require('../controllers/personalExpenseController');
 const { getBusinessExpenses, createBusinessExpense, updateBusinessExpense, deleteBusinessExpense } = require('../controllers/businessExpenseController');
 const { getVariableExpenses, createVariableExpense, updateVariableExpense, deleteVariableExpense } = require('../controllers/variableExpenseController');
@@ -24,6 +24,7 @@ const { getLoans, createLoan, updateLoan, deleteLoan, receiveCuota } = require('
 // Dashboard & Stats
 router.get('/dashboard', getFinanceDashboard);
 router.get('/estadisticas', getFinanceStats);
+router.get('/reportes-unificados', getReportesUnificados);
 
 // Gastos Personales
 router.route('/gastos-personales')

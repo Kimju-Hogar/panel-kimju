@@ -64,10 +64,12 @@ const saleSchema = new mongoose.Schema({
 });
 
 // ─── Indexes for faster queries ────────────────────────────────────────────────
-saleSchema.index({ date: -1 });           // Recent activity sort, trend queries
-saleSchema.index({ createdAt: -1 });      // Default sort by creation
-saleSchema.index({ paymentMethod: 1 });   // Dashboard: sales by payment method
-saleSchema.index({ channel: 1 });         // Filter by channel
+saleSchema.index({ date: -1 });                                   // Recent activity sort, trend queries
+saleSchema.index({ createdAt: -1 });                              // Default sort by creation
+saleSchema.index({ paymentMethod: 1 });                           // Dashboard: sales by payment method
+saleSchema.index({ channel: 1 });                                 // Filter by channel
+saleSchema.index({ date: -1, totalAmount: 1, totalProfit: 1 });   // Unified reports: monthly aggregation
+saleSchema.index({ "products.product": 1 });                      // Optimize lookup when filtering sales by specific products
 
 const Sale = mongoose.model('Sale', saleSchema);
 

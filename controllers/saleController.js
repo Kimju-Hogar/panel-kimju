@@ -105,7 +105,7 @@ const createSale = async (req, res) => {
 // @access  Private
 const getSales = async (req, res) => {
     try {
-        const { startDate, endDate, paymentMethod, channel, type } = req.query;
+        const { startDate, endDate, paymentMethod, channel, type, productId } = req.query;
         let query = {};
 
         if (startDate || endDate) {
@@ -120,8 +120,8 @@ const getSales = async (req, res) => {
 
         if (paymentMethod) query.paymentMethod = paymentMethod;
         if (channel) query.channel = channel;
-        if (req.query.productId) {
-            query["products.product"] = req.query.productId;
+        if (productId) {
+            query["products.product"] = productId;
         }
 
         if (type && type !== 'all') {
@@ -141,6 +141,7 @@ const getSales = async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 };
+
 
 // @desc    Get sales aggregated by product (for reports)
 // @route   GET /api/sales/by-product

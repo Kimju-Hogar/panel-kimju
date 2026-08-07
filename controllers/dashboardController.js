@@ -1,5 +1,8 @@
 const Sale = require('../models/Sale');
 const Product = require('../models/Product');
+const BusinessExpense = require('../models/BusinessExpense');
+const PersonalExpense = require('../models/PersonalExpense');
+const VariableExpense = require('../models/VariableExpense');
 
 // @desc    Get dashboard statistics
 // @route   GET /api/dashboard
@@ -106,19 +109,35 @@ const getDashboardStats = async (req, res) => {
             recentActivity,
             salesTrend,
             salesByPaymentMethod,
-            salesByCategory
+            salesByCategory,
+            businessExpenseStat,
+            personalExpenseStat,
+            variableExpenseStat
         ] = await Promise.all([
             Sale.aggregate(salesStatsPipeline),
             Product.aggregate(productsStatsPipeline),
             recentActivityQuery,
             Sale.aggregate(trendPipeline),
             Sale.aggregate(paymentPipeline),
-            Sale.aggregate(categoryPipeline)
+            Sale.aggregate(categoryPipeline),
+            BusinessExpense.aggregate([{ $group: { _id: null, total: { $sum: '$monto' } } }]),
+            PersonalExpense.aggregate([{ $group: { _id: null, total: { $sum: '$monto' } } }]),
+            VariableExpense.aggregate([{ $group: { _id: null, total: { $sum: '$monto' } } }])
         ]);
 
         // ─── Format Results ──────────────────────────────────────────────────────
         const totalSales = salesStats.length > 0 ? salesStats[0].totalSales : 0;
-        const totalProfit = salesStats.length > 0 ? salesStats[0].totalProfit : 0;
+        const totalSalesProfit = salesStats.length > 0 ? salesStats[0].totalProfit : 0;
+        
+        // Expenses
+        const expensesBusiness = businessExpenseStat[0]?.total || 0;
+        const expensesPersonal = personalExpenseStat[0]?.total || 0;
+        const expensesVariable = variableExpenseStat[0]?.total || 0;
+        const totalExpenses = expensesBusiness + expensesPersonal + expensesVariable;
+        
+        // Net profit
+        const totalProfit = totalSalesProfit - totalExpenses;
+
         const stockValue = productsStats.length > 0 ? productsStats[0].totalStockValue : 0;
         const lowStockCount = productsStats.length > 0 ? productsStats[0].lowStockCount : 0;
 
@@ -132,6 +151,11 @@ const getDashboardStats = async (req, res) => {
         res.json({
             totalSales,
             totalProfit,
+            totalSalesProfit,
+            expensesBusiness,
+            expensesPersonal,
+            expensesVariable,
+            totalExpenses,
             stockValue,
             lowStockCount,
             recentActivity,
