@@ -9,24 +9,51 @@ const VariableExpense = require('../models/VariableExpense');
 // @access  Private
 const getDashboardStats = async (req, res) => {
     try {
-        const { type } = req.query; // 'hogar', 'calzado', or undefined/'all'
+        const { type, startDate, endDate } = req.query; // 'hogar', 'calzado', or undefined/'all'
 
         const isFiltered = type && type !== 'all';
         const productMatch = isFiltered ? { "productDetails.type": type } : {};
         const stockMatch = isFiltered ? { type } : {};
+
+        let dateMatch = {};
+        if (startDate || endDate) {
+            dateMatch.date = {};
+            if (startDate) dateMatch.date.$gte = new Date(startDate);
+            if (endDate) {
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999);
+                dateMatch.date.$lte = end;
+            }
+        }
+
+        let expenseDateMatch = {};
+        if (startDate || endDate) {
+            expenseDateMatch.fecha = {};
+            if (startDate) expenseDateMatch.fecha.$gte = new Date(startDate);
+            if (endDate) {
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999);
+                expenseDateMatch.fecha.$lte = end;
+            }
+        }
 
         // ─── Build all aggregation pipelines ────────────────────────────────────
 
         // 1. Total Sales & Total Profit
         const salesStatsPipeline = isFiltered
             ? [
+                ...(Object.keys(dateMatch).length > 0 ? [{ $match: dateMatch }] : []),
                 { $unwind: "$products" },
-                { $lookup: { from: "products", localField: "products.product", foreignField: "_id", as: "productDetails" } },
+                { $group: { _id: "$products.product", subtotal: { $sum: "$products.subtotal" }, quantity: { $sum: "$products.quantity" }, unitCost: { $first: "$products.unitCost" } } },
+                { $lookup: { from: "products", localField: "_id", foreignField: "_id", as: "productDetails" } },
                 { $unwind: "$productDetails" },
                 { $match: productMatch },
-                { $group: { _id: null, totalSales: { $sum: "$products.subtotal" }, totalProfit: { $sum: { $subtract: ["$products.subtotal", { $multiply: ["$products.unitCost", "$products.quantity"] }] } } } }
+                { $group: { _id: null, totalSales: { $sum: "$subtotal" }, totalProfit: { $sum: { $subtract: ["$subtotal", { $multiply: ["$unitCost", "$quantity"] }] } } } }
             ]
-            : [{ $group: { _id: null, totalSales: { $sum: "$totalAmount" }, totalProfit: { $sum: "$totalProfit" } } }];
+            : [
+                ...(Object.keys(dateMatch).length > 0 ? [{ $match: dateMatch }] : []),
+                { $group: { _id: null, totalSales: { $sum: "$totalAmount" }, totalProfit: { $sum: "$totalProfit" } } }
+            ];
 
         // 2. Stock Value & Low Stock Count
         const productsStatsPipeline = [
@@ -38,7 +65,7 @@ const getDashboardStats = async (req, res) => {
         // 3. Recent Activity (Last 5 Sales)
         let recentActivityQuery;
         if (!isFiltered) {
-            recentActivityQuery = Sale.find()
+            recentActivityQuery = Sale.find(dateMatch)
                 .sort({ createdAt: -1 })
                 .limit(5)
                 .populate('customer', 'name')
@@ -46,6 +73,7 @@ const getDashboardStats = async (req, res) => {
                 .lean();
         } else {
             recentActivityQuery = Sale.aggregate([
+                ...(Object.keys(dateMatch).length > 0 ? [{ $match: dateMatch }] : []),
                 { $sort: { createdAt: -1 } },
                 { $limit: 50 },
                 { $unwind: "$products" },
@@ -85,21 +113,27 @@ const getDashboardStats = async (req, res) => {
         // 5. Sales by Payment Method
         const paymentPipeline = isFiltered
             ? [
+                ...(Object.keys(dateMatch).length > 0 ? [{ $match: dateMatch }] : []),
                 { $unwind: "$products" },
                 { $lookup: { from: "products", localField: "products.product", foreignField: "_id", as: "productDetails" } },
                 { $unwind: "$productDetails" },
                 { $match: productMatch },
                 { $group: { _id: "$paymentMethod", value: { $sum: "$products.subtotal" } } }
             ]
-            : [{ $group: { _id: "$paymentMethod", value: { $sum: "$totalAmount" } } }];
+            : [
+                ...(Object.keys(dateMatch).length > 0 ? [{ $match: dateMatch }] : []),
+                { $group: { _id: "$paymentMethod", value: { $sum: "$totalAmount" } } }
+            ];
 
         // 6. Sales by Category
         const categoryPipeline = [
+            ...(Object.keys(dateMatch).length > 0 ? [{ $match: dateMatch }] : []),
             { $unwind: "$products" },
-            { $lookup: { from: "products", localField: "products.product", foreignField: "_id", as: "productDetails" } },
+            { $group: { _id: "$products.product", subtotal: { $sum: "$products.subtotal" } } },
+            { $lookup: { from: "products", localField: "_id", foreignField: "_id", as: "productDetails" } },
             { $unwind: "$productDetails" },
             ...(isFiltered ? [{ $match: productMatch }] : []),
-            { $group: { _id: "$productDetails.category", value: { $sum: "$products.subtotal" } } }
+            { $group: { _id: "$productDetails.category", value: { $sum: "$subtotal" } } }
         ];
 
         // ─── Execute ALL queries IN PARALLEL ────────────────────────────────────
@@ -120,9 +154,18 @@ const getDashboardStats = async (req, res) => {
             Sale.aggregate(trendPipeline),
             Sale.aggregate(paymentPipeline),
             Sale.aggregate(categoryPipeline),
-            BusinessExpense.aggregate([{ $group: { _id: null, total: { $sum: '$monto' } } }]),
-            PersonalExpense.aggregate([{ $group: { _id: null, total: { $sum: '$monto' } } }]),
-            VariableExpense.aggregate([{ $group: { _id: null, total: { $sum: '$monto' } } }])
+            BusinessExpense.aggregate([
+                ...(Object.keys(expenseDateMatch).length > 0 ? [{ $match: expenseDateMatch }] : []),
+                { $group: { _id: null, total: { $sum: '$monto' } } }
+            ]),
+            PersonalExpense.aggregate([
+                ...(Object.keys(expenseDateMatch).length > 0 ? [{ $match: expenseDateMatch }] : []),
+                { $group: { _id: null, total: { $sum: '$monto' } } }
+            ]),
+            VariableExpense.aggregate([
+                ...(Object.keys(expenseDateMatch).length > 0 ? [{ $match: expenseDateMatch }] : []),
+                { $group: { _id: null, total: { $sum: '$monto' } } }
+            ])
         ]);
 
         // ─── Format Results ──────────────────────────────────────────────────────

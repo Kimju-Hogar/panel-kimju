@@ -164,19 +164,28 @@ const getSalesByProduct = async (req, res) => {
         const pipeline = [
             { $match: matchStage },
             { $unwind: "$products" },
-            { $lookup: { from: "products", localField: "products.product", foreignField: "_id", as: "productDetails" } },
-            { $unwind: "$productDetails" },
-            ...(type && type !== 'all' ? [{ $match: { "productDetails.type": type } }] : []),
             {
                 $group: {
-                    _id: "$productDetails._id",
-                    productName: { $first: "$productDetails.name" },
-                    sku: { $first: "$productDetails.sku" },
-                    image: { $first: "$productDetails.image" },
+                    _id: "$products.product",
                     lastSaleDate: { $max: "$date" },
                     totalQuantity: { $sum: "$products.quantity" },
                     totalRevenue: { $sum: "$products.subtotal" },
                     totalProfit: { $sum: { $subtract: ["$products.subtotal", { $multiply: ["$products.quantity", "$products.unitCost"] }] } }
+                }
+            },
+            { $lookup: { from: "products", localField: "_id", foreignField: "_id", as: "productDetails" } },
+            { $unwind: "$productDetails" },
+            ...(type && type !== 'all' ? [{ $match: { "productDetails.type": type } }] : []),
+            {
+                $project: {
+                    _id: 1,
+                    productName: "$productDetails.name",
+                    sku: "$productDetails.sku",
+                    image: "$productDetails.image",
+                    lastSaleDate: 1,
+                    totalQuantity: 1,
+                    totalRevenue: 1,
+                    totalProfit: 1
                 }
             },
             { $sort: { totalRevenue: -1 } }
