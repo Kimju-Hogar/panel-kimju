@@ -6,6 +6,7 @@ const morgan = require('morgan');
 require('dotenv').config();
 
 const app = express();
+const { cacheMiddleware, clearCache } = require('./utils/cache');
 
 // Middleware
 app.use(express.json());
@@ -17,15 +18,23 @@ app.use(morgan('dev'));
 
 const path = require('path');
 
+// Clear cache on any mutation globally
+app.use((req, res, next) => {
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+        clearCache();
+    }
+    next();
+});
+
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));
-app.use('/api/products', require('./routes/productRoutes'));
-app.use('/api/sales', require('./routes/saleRoutes'));
+app.use('/api/products', cacheMiddleware, require('./routes/productRoutes'));
+app.use('/api/sales', cacheMiddleware, require('./routes/saleRoutes'));
 app.use('/api/upload', require('./routes/uploadRoutes'));
-app.use('/api/categories', require('./routes/categoryRoutes')); // Route registered
-app.use('/api/dashboard', require('./routes/dashboardRoutes')); // Dashboard routes
+app.use('/api/categories', cacheMiddleware, require('./routes/categoryRoutes')); // Route registered
+app.use('/api/dashboard', cacheMiddleware, require('./routes/dashboardRoutes')); // Dashboard routes
 app.use('/api/sync', require('./routes/syncRoutes')); // Sync routes
-app.use('/api/finance', require('./routes/financeRoutes')); // Finance module routes
+app.use('/api/finance', cacheMiddleware, require('./routes/financeRoutes')); // Finance module routes
 
 // Make uploads folder static
 const fs = require('fs');
