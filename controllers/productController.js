@@ -58,7 +58,9 @@ const createProduct = async (req, res) => {
             images,
             colors,
             type,
-            sizes
+            sizes,
+            description,
+            discount
         } = req.body;
 
         // ─── Explicit validation (returns 400 instead of 500 on bad data) ───
@@ -93,7 +95,9 @@ const createProduct = async (req, res) => {
             images: Array.isArray(images) ? images : [],
             colors: Array.isArray(colors) ? colors : [],
             type,
-            sizes: sizes || []
+            sizes: sizes || [],
+            description: description || '',
+            discount: Number(discount) || 0
         });
 
         const createdProduct = await product.save();
@@ -129,7 +133,9 @@ const updateProduct = async (req, res) => {
             images,
             colors,
             type,
-            sizes
+            sizes,
+            description,
+            discount
         } = req.body;
 
         const product = await Product.findById(req.params.id);
@@ -153,6 +159,8 @@ const updateProduct = async (req, res) => {
         if (colors !== undefined) product.colors = Array.isArray(colors) ? colors : [];
         if (type !== undefined) product.type = type;
         if (sizes !== undefined) product.sizes = sizes;
+        if (description !== undefined) product.description = description;
+        if (discount !== undefined) product.discount = Number(discount);
 
         const updatedProduct = await product.save();
         res.json(updatedProduct);

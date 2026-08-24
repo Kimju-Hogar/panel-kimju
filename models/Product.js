@@ -65,6 +65,16 @@ const productSchema = new mongoose.Schema({
         type: Number,
         default: 5
     },
+    description: {
+        type: String,
+        default: ''
+    },
+    discount: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100
+    },
     status: {
         type: String,
         enum: ['active', 'inactive'],
