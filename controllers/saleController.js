@@ -1,5 +1,9 @@
 const Sale = require('../models/Sale');
 const Product = require('../models/Product');
+const { normalizePaymentMethod } = require('../config/paymentMethods');
+
+/** Escapa un texto para poder usarlo dentro de una expresion regular. */
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // @desc    Register a new sale
 // @route   POST /api/sales
@@ -84,7 +88,9 @@ const createSale = async (req, res) => {
             products: processedProducts,
             totalAmount,
             totalProfit,
-            paymentMethod,
+            // Se guarda el nombre canonico para que los reportes no partan el
+            // mismo medio de pago en varias filas.
+            paymentMethod: normalizePaymentMethod(paymentMethod),
             channel,
             customer,
             createdBy: req.user ? req.user._id : null
@@ -118,7 +124,13 @@ const getSales = async (req, res) => {
             }
         }
 
-        if (paymentMethod) query.paymentMethod = paymentMethod;
+        if (paymentMethod) {
+            // El filtro exacto no encontraba nada cuando el valor guardado traia
+            // datos pegados ("Nequi 3146757580") o venia de la tienda en otra
+            // capitalizacion. Ahora se filtra por familia de medio de pago.
+            const canonical = normalizePaymentMethod(paymentMethod);
+            query.paymentMethod = new RegExp('^' + escapeRegExp(canonical), 'i');
+        }
         if (channel) query.channel = channel;
         if (productId) {
             query["products.product"] = productId;
@@ -257,7 +269,7 @@ const updateSale = async (req, res) => {
             sale.totalProfit = newTotalProfit;
         }
 
-        if (paymentMethod) sale.paymentMethod = paymentMethod;
+        if (paymentMethod) sale.paymentMethod = normalizePaymentMethod(paymentMethod);
         if (channel) sale.channel = channel;
         if (customer) sale.customer = { ...sale.customer, ...customer };
 

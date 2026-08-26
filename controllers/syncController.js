@@ -1,18 +1,19 @@
 const Sale = require('../models/Sale');
 const Product = require('../models/Product');
+const { normalizePaymentMethod } = require('../config/paymentMethods');
 
-// NOTE: syncProductToWebsites has been removed.
-// Products are now shared via the same MongoDB database.
-// Websites read directly from the Panel's products collection, filtered by type.
+// Los productos ya no se sincronizan: las tres aplicaciones comparten la misma
+// base de datos y las tiendas leen la coleccion de productos del panel,
+// filtrada por tipo (hogar / calzado).
 
-// @desc    Receive sale from website
+// @desc    Recibir una venta desde una tienda online
 // @route   POST /api/sync/sales
-// @access  Private (Shared Secret)
+// @access  Privado (secreto compartido)
 const receiveWebSale = async (req, res) => {
     try {
         const secret = req.headers['x-sync-secret'];
-        if (secret !== process.env.SYNC_SECRET) {
-            return res.status(401).json({ message: 'Invalid sync secret' });
+        if (!process.env.SYNC_SECRET || secret !== process.env.SYNC_SECRET) {
+            return res.status(401).json({ message: 'Secreto de sincronizacion invalido' });
         }
 
         const {
@@ -20,9 +21,25 @@ const receiveWebSale = async (req, res) => {
             products,
             totalAmount,
             paymentMethod,
+            paymentReference,
             customer,
-            origin
+            origin,
         } = req.body;
+
+        if (!products || products.length === 0) {
+            return res.status(400).json({ message: 'La venta no trae productos' });
+        }
+
+        // Una misma orden puede llegar dos veces: por el webhook del financiador
+        // y por la confirmacion del navegador. Se responde con la venta que ya
+        // existe en lugar de duplicarla en contabilidad.
+        if (orderId) {
+            const existing = await Sale.findOne({ externalOrderId: orderId });
+            if (existing) {
+                console.log(`[Sync] La orden ${orderId} ya estaba registrada. No se duplica.`);
+                return res.status(200).json(existing);
+            }
+        }
 
         const saleProducts = [];
         let calculatedTotal = 0;
@@ -31,52 +48,72 @@ const receiveWebSale = async (req, res) => {
         for (const item of products) {
             const product = await Product.findOne({ sku: item.sku });
             if (!product) {
-                console.warn(`Product SKU ${item.sku} not found during sync sale.`);
+                console.warn(`[Sync] SKU ${item.sku} no encontrado. Se omite del registro.`);
                 continue;
             }
 
-            // Deduct stock
             product.stock = Math.max(0, product.stock - item.quantity);
             await product.save();
 
             const unitCost = product.costPrice || 0;
             const subtotal = item.price * item.quantity;
-            const profit = subtotal - (unitCost * item.quantity);
 
             saleProducts.push({
                 product: product._id,
                 quantity: item.quantity,
                 unitPrice: item.price,
-                unitCost: unitCost,
-                subtotal: subtotal
+                unitCost,
+                subtotal,
+                selectedSize: item.selectedSize,
+                selectedColor: item.selectedColor,
             });
 
             calculatedTotal += subtotal;
-            totalProfit += profit;
+            totalProfit += subtotal - unitCost * item.quantity;
         }
 
+        if (saleProducts.length === 0) {
+            return res.status(422).json({
+                message: 'Ningun SKU de la orden existe en el inventario del panel',
+            });
+        }
+
+        // Aqui llega ya el medio de pago real (Wompi, Addi, Sistecredito). Antes
+        // la tienda mandaba siempre "Wompi" y por eso los reportes de pagos a
+        // cuotas no existian.
         const sale = new Sale({
             products: saleProducts,
             totalAmount: totalAmount || calculatedTotal,
-            totalProfit: totalProfit,
-            paymentMethod: paymentMethod || 'Online',
-            channel: origin || 'Online Store',
+            totalProfit,
+            paymentMethod: normalizePaymentMethod(paymentMethod),
+            paymentReference: paymentReference || '',
+            externalOrderId: orderId || undefined,
+            channel: origin || 'Tienda Online',
             customer: {
-                name: customer?.name || 'Online Customer',
-                contact: customer?.email || ''
+                name: customer?.name || 'Cliente Online',
+                contact: customer?.email || '',
             },
-            date: new Date()
+            date: new Date(),
         });
 
         const createdSale = await sale.save();
-        res.status(201).json(createdSale);
 
+        console.log(
+            `[Sync] Venta ${orderId || createdSale._id} registrada: ${sale.paymentMethod} / ${sale.channel}`
+        );
+
+        res.status(201).json(createdSale);
     } catch (error) {
-        console.error("Error receiving web sale:", error);
+        // Carrera entre dos avisos simultaneos de la misma orden.
+        if (error.code === 11000) {
+            const existing = await Sale.findOne({ externalOrderId: req.body.orderId });
+            if (existing) return res.status(200).json(existing);
+        }
+        console.error('[Sync] Error recibiendo la venta:', error);
         res.status(500).json({ message: error.message });
     }
 };
 
 module.exports = {
-    receiveWebSale
+    receiveWebSale,
 };

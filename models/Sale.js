@@ -43,6 +43,17 @@ const saleSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    // Referencia del pago en la pasarela o el financiador (Wompi, Addi, Sistecredito).
+    paymentReference: {
+        type: String
+    },
+    // Id de la orden en la tienda online. Es lo que evita registrar dos veces
+    // la misma venta cuando llegan a la vez el webhook y la confirmacion del
+    // navegador. El indice sparse deja convivir las ventas manuales, que no lo tienen.
+    externalOrderId: {
+        type: String,
+        index: { unique: true, sparse: true }
+    },
     channel: {
         type: String,
         required: true
