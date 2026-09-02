@@ -55,11 +55,53 @@ const getDashboardStats = async (req, res) => {
                 { $group: { _id: null, totalSales: { $sum: "$totalAmount" }, totalProfit: { $sum: "$totalProfit" } } }
             ];
 
-        // 2. Stock Value & Low Stock Count
+        // 2. Inversion en inventario, valor de venta y alertas de stock.
+        //
+        // Antes solo se calculaba costo x stock. Se agrega el valor a precio de
+        // venta para poder responder la pregunta que de verdad importa: cuanta
+        // plata hay inmovilizada y cuanta utilidad esta dormida ahi.
         const productsStatsPipeline = [
             { $match: stockMatch },
-            { $project: { stockValue: { $multiply: ["$costPrice", "$stock"] }, isLowStock: { $lt: ["$stock", "$minStock"] } } },
-            { $group: { _id: null, totalStockValue: { $sum: "$stockValue" }, lowStockCount: { $sum: { $cond: ["$isLowStock", 1, 0] } } } }
+            {
+                $project: {
+                    type: 1,
+                    stock: 1,
+                    investedCost: { $multiply: [{ $ifNull: ["$costPrice", 0] }, { $ifNull: ["$stock", 0] }] },
+                    retailValue: { $multiply: [{ $ifNull: ["$publicPrice", 0] }, { $ifNull: ["$stock", 0] }] },
+                    isLowStock: { $lt: ["$stock", "$minStock"] },
+                    hasStock: { $gt: ["$stock", 0] },
+                    // Un producto sin costo registrado no suma a la inversion y
+                    // deja la cifra corta sin avisar. Se cuentan para poder
+                    // mostrarlo como aviso de datos incompletos.
+                    missingCost: { $lte: [{ $ifNull: ["$costPrice", 0] }, 0] }
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    totalStockValue: { $sum: "$investedCost" },
+                    totalRetailValue: { $sum: "$retailValue" },
+                    totalUnits: { $sum: "$stock" },
+                    references: { $sum: 1 },
+                    withStock: { $sum: { $cond: ["$hasStock", 1, 0] } },
+                    missingCostCount: { $sum: { $cond: ["$missingCost", 1, 0] } },
+                    lowStockCount: { $sum: { $cond: ["$isLowStock", 1, 0] } }
+                }
+            }
+        ];
+
+        // Desglose por tienda, para saber en cual esta la plata.
+        const inventoryByTypePipeline = [
+            { $match: stockMatch },
+            {
+                $group: {
+                    _id: "$type",
+                    investedCost: { $sum: { $multiply: [{ $ifNull: ["$costPrice", 0] }, { $ifNull: ["$stock", 0] }] } },
+                    retailValue: { $sum: { $multiply: [{ $ifNull: ["$publicPrice", 0] }, { $ifNull: ["$stock", 0] }] } },
+                    units: { $sum: "$stock" }
+                }
+            },
+            { $sort: { investedCost: -1 } }
         ];
 
         // 3. Recent Activity (Last 5 Sales)
@@ -146,7 +188,8 @@ const getDashboardStats = async (req, res) => {
             salesByCategory,
             businessExpenseStat,
             personalExpenseStat,
-            variableExpenseStat
+            variableExpenseStat,
+            inventoryByType
         ] = await Promise.all([
             Sale.aggregate(salesStatsPipeline),
             Product.aggregate(productsStatsPipeline),
@@ -165,7 +208,8 @@ const getDashboardStats = async (req, res) => {
             VariableExpense.aggregate([
                 ...(Object.keys(expenseDateMatch).length > 0 ? [{ $match: expenseDateMatch }] : []),
                 { $group: { _id: null, total: { $sum: '$monto' } } }
-            ])
+            ]),
+            Product.aggregate(inventoryByTypePipeline)
         ]);
 
         // ─── Format Results ──────────────────────────────────────────────────────
@@ -181,8 +225,33 @@ const getDashboardStats = async (req, res) => {
         // Net profit
         const totalProfit = totalSalesProfit - totalExpenses;
 
-        const stockValue = productsStats.length > 0 ? productsStats[0].totalStockValue : 0;
-        const lowStockCount = productsStats.length > 0 ? productsStats[0].lowStockCount : 0;
+        const inv = productsStats[0] || {};
+        const stockValue = inv.totalStockValue || 0;
+        const lowStockCount = inv.lowStockCount || 0;
+        const retailValue = inv.totalRetailValue || 0;
+
+        // Lo que se ganaria si se vendiera todo el inventario al precio actual.
+        const potentialProfit = retailValue - stockValue;
+
+        const inventory = {
+            investedCost: stockValue,
+            retailValue,
+            potentialProfit,
+            marginPercent: retailValue > 0 ? (potentialProfit / retailValue) * 100 : 0,
+            units: inv.totalUnits || 0,
+            references: inv.references || 0,
+            withStock: inv.withStock || 0,
+            // Referencias con costo en cero: no suman a la inversion, asi que la
+            // cifra se queda corta. Se reporta para poder avisarlo en pantalla.
+            missingCostCount: inv.missingCostCount || 0,
+            lowStockCount,
+            byType: (inventoryByType || []).map((row) => ({
+                type: row._id || 'sin clasificar',
+                investedCost: row.investedCost || 0,
+                retailValue: row.retailValue || 0,
+                units: row.units || 0
+            }))
+        };
 
         const days = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
         const formattedTrend = salesTrend.map(item => ({
@@ -201,6 +270,7 @@ const getDashboardStats = async (req, res) => {
             totalExpenses,
             stockValue,
             lowStockCount,
+            inventory,
             recentActivity,
             salesTrend: formattedTrend,
             salesByPaymentMethod,
