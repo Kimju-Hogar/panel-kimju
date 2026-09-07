@@ -52,8 +52,16 @@ const receiveWebSale = async (req, res) => {
                 continue;
             }
 
-            product.stock = Math.max(0, product.stock - item.quantity);
-            await product.save();
+            // NO se descuenta stock aqui.
+            //
+            // Las tres aplicaciones comparten la coleccion `products`. El backend
+            // de la tienda ya descontó el stock en decreaseStock() justo antes de
+            // reportar esta venta, y ademas lo hizo bien: descuenta tambien el
+            // stock de la talla o el color vendido, cosa que aqui no se sabe.
+            // Descontar otra vez restaba el doble en cada venta web.
+            //
+            // Las ventas manuales (saleController.createSale) si descuentan,
+            // porque en ese caso el Panel es el origen de la venta.
 
             const unitCost = product.costPrice || 0;
             const subtotal = item.price * item.quantity;
