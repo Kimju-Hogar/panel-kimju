@@ -144,6 +144,32 @@ const updateProduct = async (req, res) => {
             return res.status(404).json({ message: 'Producto no encontrado' });
         }
 
+        // Un producto con tallas (calzado) o colores (hogar) recalcula su stock
+        // global a partir de ellas al guardar. Cambiar solo `stock` no tenia
+        // ningun efecto y el usuario creia que lo habia corregido.
+        const tipoFinal = type !== undefined ? type : product.type;
+        const variantesFinales = tipoFinal === 'calzado'
+            ? (sizes !== undefined ? sizes : product.sizes)
+            : (colors !== undefined ? colors : product.colors);
+        const manejaPorVariante = Array.isArray(variantesFinales) && variantesFinales.length > 0;
+        const traeVariantes = tipoFinal === 'calzado' ? sizes !== undefined : colors !== undefined;
+        if (stock !== undefined && manejaPorVariante && !traeVariantes) {
+            return res.status(400).json({
+                message: `Este producto maneja el stock por ${tipoFinal === 'calzado' ? 'talla' : 'color'}: corrígelo desde el formulario del producto, en cada ${tipoFinal === 'calzado' ? 'talla' : 'color'}.`,
+            });
+        }
+
+        // El formulario manda el updatedAt del producto tal como lo abrio. Si el
+        // producto cambio despues (una venta descontó stock) y el formulario trae
+        // stock o variantes, guardar pisaria ese descuento con los numeros viejos.
+        const vistoEn = req.body.updatedAt ? new Date(req.body.updatedAt) : null;
+        const tocaStock = stock !== undefined || colors !== undefined || sizes !== undefined;
+        if (vistoEn && !isNaN(vistoEn) && tocaStock && product.updatedAt && product.updatedAt.getTime() > vistoEn.getTime() + 1000) {
+            return res.status(409).json({
+                message: 'El stock de este producto cambió mientras lo editabas (ventas recientes). Cierra el formulario, vuelve a abrirlo y repite el cambio.',
+            });
+        }
+
         // Only update fields that are provided
         if (name !== undefined) product.name = name;
         if (sku !== undefined) product.sku = sku;
