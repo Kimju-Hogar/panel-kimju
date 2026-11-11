@@ -6,7 +6,7 @@ const morgan = require('morgan');
 require('dotenv').config();
 
 const app = express();
-const { cacheMiddleware, clearCache } = require('./utils/cache');
+const { cacheMiddleware, sinCache, clearCache } = require('./utils/cache');
 
 // Middleware
 app.use(express.json());
@@ -28,8 +28,10 @@ app.use((req, res, next) => {
 
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));
-app.use('/api/products', cacheMiddleware, require('./routes/productRoutes'));
-app.use('/api/sales', cacheMiddleware, require('./routes/saleRoutes'));
+// Productos y ventas cambian con cada venta (tambien desde las tiendas, que no
+// pasan por este servidor): servir una copia en memoria mostraba stock viejo.
+app.use('/api/products', sinCache, require('./routes/productRoutes'));
+app.use('/api/sales', sinCache, require('./routes/saleRoutes'));
 app.use('/api/upload', require('./routes/uploadRoutes'));
 app.use('/api/categories', cacheMiddleware, require('./routes/categoryRoutes')); // Route registered
 app.use('/api/dashboard', cacheMiddleware, require('./routes/dashboardRoutes')); // Dashboard routes

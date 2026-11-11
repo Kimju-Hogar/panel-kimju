@@ -5,6 +5,18 @@ const { normalizePaymentMethod } = require('../config/paymentMethods');
 /** Escapa un texto para poder usarlo dentro de una expresion regular. */
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/**
+ * Un producto con tallas (calzado) o colores (hogar) recalcula su stock global
+ * a partir de ellas cada vez que se guarda (ver models/Product.js). Por eso un
+ * descuento hecho solo sobre el stock global se pierde: la venta exige la
+ * variante en esos casos.
+ */
+const variantRequerida = (p) =>
+    (p.type === 'calzado' && Array.isArray(p.sizes) && p.sizes.length > 0) ||
+    (p.type === 'hogar' && Array.isArray(p.colors) && p.colors.length > 0);
+
+const nombreVariante = (p) => (p.type === 'calzado' ? 'la talla' : 'el color');
+
 // @desc    Register a new sale
 // @route   POST /api/sales
 // @access  Private
@@ -58,6 +70,11 @@ const createSale = async (req, res) => {
                 }
                 colorEntry.stock -= item.quantity;
             } else {
+                if (variantRequerida(product)) {
+                    // Sin variante el descuento se perderia al guardar (el stock
+                    // global se recalcula desde tallas/colores).
+                    return res.status(400).json({ message: `Elige ${nombreVariante(product)} de: ${product.name}` });
+                }
                 if (product.stock < item.quantity) {
                     return res.status(400).json({ message: `Stock insuficiente para: ${product.name}` });
                 }
@@ -223,48 +240,125 @@ const updateSale = async (req, res) => {
         }
 
         if (products && Array.isArray(products)) {
-            // Restore original stock in parallel
-            await Promise.all(
-                sale.products.map(item =>
-                    Product.findByIdAndUpdate(item.product, { $inc: { stock: item.quantity } })
-                )
-            );
+            if (products.length === 0) {
+                return res.status(400).json({ message: 'La venta debe tener al menos un producto' });
+            }
+
+            // Antes se devolvia todo el stock con $inc sobre el stock global y se
+            // volvia a descontar igual, ya sin talla ni color. Como el stock
+            // global de un producto con variantes se recalcula a partir de ellas
+            // al guardar, esos movimientos se perdian y la venta quedaba sin su
+            // variante (con lo que tampoco se restauraba bien al eliminarla).
+            //
+            // Ahora se calcula la diferencia por (producto, talla/color) entre lo
+            // que tenia la venta y lo que llega, y solo se mueve esa diferencia.
+            const idDe = (p) => (p && p._id ? String(p._id) : String(p));
+            const claveDe = (productId, size, color) => `${productId}|${size || ''}|${color || ''}`;
+
+            const originalesLibres = [...sale.products];
+            const nuevos = [];
+            for (const item of products) {
+                const productId = idDe(item.product);
+                const quantity = Number(item.quantity);
+                const unitPrice = Number(item.unitPrice);
+                if (!productId || productId === 'undefined' || productId === 'null') {
+                    return res.status(400).json({ message: 'Hay un renglon sin producto' });
+                }
+                if (!Number.isInteger(quantity) || quantity <= 0) {
+                    return res.status(400).json({ message: 'La cantidad debe ser un entero mayor que cero' });
+                }
+                if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+                    return res.status(400).json({ message: 'Precio unitario invalido' });
+                }
+
+                // Variante: la que manda el cliente o, si no la manda, la del
+                // renglon original correspondiente (mismo _id o mismo producto).
+                let idx = -1;
+                if (item._id) idx = originalesLibres.findIndex((o) => String(o._id) === String(item._id));
+                if (idx === -1) idx = originalesLibres.findIndex((o) => String(o.product) === productId);
+                const original = idx > -1 ? originalesLibres.splice(idx, 1)[0] : null;
+
+                nuevos.push({
+                    productId,
+                    quantity,
+                    unitPrice,
+                    selectedSize: item.selectedSize || (original && original.selectedSize) || undefined,
+                    selectedColor: item.selectedColor || (original && original.selectedColor) || undefined,
+                });
+            }
+
+            const diferencias = new Map();
+            const acumular = (productId, size, color, delta) => {
+                const k = claveDe(productId, size, color);
+                const prev = diferencias.get(k) || { productId, size, color, delta: 0 };
+                prev.delta += delta;
+                diferencias.set(k, prev);
+            };
+            for (const o of sale.products) acumular(String(o.product), o.selectedSize, o.selectedColor, -o.quantity);
+            for (const n of nuevos) acumular(n.productId, n.selectedSize, n.selectedColor, n.quantity);
+
+            const ids = [...new Set([...nuevos.map((n) => n.productId), ...sale.products.map((o) => String(o.product))])];
+            const dbProducts = await Product.find({ _id: { $in: ids } });
+            const productMap = new Map(dbProducts.map((p) => [p._id.toString(), p]));
+
+            for (const n of nuevos) {
+                if (!productMap.has(n.productId)) {
+                    return res.status(404).json({ message: `Producto no encontrado: ${n.productId}` });
+                }
+            }
+
+            // Se valida y se ajusta todo en memoria; solo si nada falla se guarda.
+            const tocados = new Set();
+            for (const { productId, size, color, delta } of diferencias.values()) {
+                if (delta === 0) continue;
+                const product = productMap.get(productId);
+                if (!product) continue; // producto ya borrado del inventario: no hay stock que mover
+
+                let entrada = null;
+                if (size && product.sizes?.length > 0) entrada = product.sizes.find((s) => s.size === size) || null;
+                if (!entrada && color && product.colors?.length > 0) entrada = product.colors.find((c) => c.color === color) || null;
+
+                if (entrada) {
+                    if (delta > 0 && entrada.stock < delta) {
+                        return res.status(400).json({ message: `Stock insuficiente para ${size || color} de: ${product.name}` });
+                    }
+                    entrada.stock -= delta;
+                } else if (variantRequerida(product)) {
+                    if (delta > 0) {
+                        return res.status(400).json({ message: `Elige ${nombreVariante(product)} de: ${product.name}` });
+                    }
+                    // Devolucion sin variante conocida (venta editada con la version
+                    // anterior): no se puede saber a que talla/color regresarla.
+                    console.warn(`[Ventas] No se devolvieron ${-delta} unidad(es) de ${product.sku}: la venta no tenia talla/color.`);
+                    continue;
+                } else {
+                    if (delta > 0 && product.stock < delta) {
+                        return res.status(400).json({ message: `Stock insuficiente para: ${product.name}` });
+                    }
+                    product.stock -= delta;
+                }
+                tocados.add(productId);
+            }
+
+            await Promise.all([...tocados].map((id) => productMap.get(id).save()));
 
             let newTotalAmount = 0;
             let newTotalProfit = 0;
-            const processedProducts = [];
-
-            for (const item of products) {
-                const productId = item.product._id || item.product;
-                const productDb = await Product.findById(productId);
-
-                if (!productDb) throw new Error(`Producto no encontrado: ${productId}`);
-
-                const quantity = Number(item.quantity);
-                const unitPrice = Number(item.unitPrice);
-
-                if (productDb.stock < quantity) {
-                    throw new Error(`Stock insuficiente para: ${productDb.name}`);
-                }
-
-                const subtotal = unitPrice * quantity;
-                const profit = (unitPrice - productDb.costPrice) * quantity;
-
+            sale.products = nuevos.map((n) => {
+                const productDb = productMap.get(n.productId);
+                const subtotal = n.unitPrice * n.quantity;
                 newTotalAmount += subtotal;
-                newTotalProfit += profit;
-
-                processedProducts.push({
+                newTotalProfit += (n.unitPrice - productDb.costPrice) * n.quantity;
+                return {
                     product: productDb._id,
-                    quantity,
-                    unitPrice,
+                    quantity: n.quantity,
+                    unitPrice: n.unitPrice,
                     unitCost: productDb.costPrice,
-                    subtotal
-                });
-
-                await Product.findByIdAndUpdate(productDb._id, { $inc: { stock: -quantity } });
-            }
-
-            sale.products = processedProducts;
+                    subtotal,
+                    selectedSize: n.selectedSize,
+                    selectedColor: n.selectedColor,
+                };
+            });
             sale.totalAmount = newTotalAmount;
             sale.totalProfit = newTotalProfit;
         }
